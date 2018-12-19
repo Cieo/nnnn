@@ -188,6 +188,7 @@ typedef struct {
     ngx_array_t                     *pass_headers;
 
     ngx_http_upstream_local_t       *local;
+    ngx_http_complex_value_t        *eth;
 
 #if (NGX_HTTP_CACHE)
     ngx_shm_zone_t                  *cache_zone;

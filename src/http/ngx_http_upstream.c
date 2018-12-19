@@ -545,6 +545,7 @@ static void
 ngx_http_upstream_init_request(ngx_http_request_t *r)
 {
     ngx_str_t                      *host;
+    ngx_str_t                      *eth;
     ngx_uint_t                      i;
     ngx_resolver_ctx_t             *ctx, temp;
     ngx_http_cleanup_t             *cln;
@@ -790,6 +791,12 @@ found:
         return;
     }
 
+    if (u->conf->eth) {
+        if (ngx_http_complex_value(r, u->conf->eth, &eth) != NGX_OK) {
+            return NGX_ERROR;
+        }
+
+    }
     u->peer.start_time = ngx_current_msec;
 
     if (u->conf->next_upstream_tries
