@@ -81,7 +81,7 @@ ngx_event_connect_peer(ngx_peer_connection_t *pc)
         goto failed;
     }
 
-    if (pc->local) {
+    if (pc->local && pc->eth == NULL) {
 
 #if (NGX_HAVE_TRANSPARENT_PROXY)
         if (pc->transparent) {
@@ -144,7 +144,18 @@ ngx_event_connect_peer(ngx_peer_connection_t *pc)
 
             goto failed;
         }
+    } else if (pc->eth != NULL){
+        if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR,
+                       (const void *) &reuse_addr, sizeof(int))
+            == -1)
+        {
+            ngx_log_error(NGX_LOG_ALERT, pc->log, ngx_socket_errno,
+                          "setsockopt(SO_BIND_ETH) failed");
+            goto failed;
+        }
     }
+
+
 
     if (type == SOCK_STREAM) {
         c->recv = ngx_recv;
