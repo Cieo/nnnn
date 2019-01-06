@@ -359,7 +359,7 @@ ngx_stream_proxy_handler(ngx_stream_session_t *s)
 {
     u_char                           *p;
     ngx_str_t                        *host;
-    ngx_str_t                        *eth;
+    ngx_str_t                        eth;
     ngx_uint_t                        i;
     ngx_connection_t                 *c;
     ngx_resolver_ctx_t               *ctx, temp;
@@ -386,7 +386,7 @@ ngx_stream_proxy_handler(ngx_stream_session_t *s)
         if (ngx_stream_complex_value(s, pscf->eth, &eth) != NGX_OK) {
             ngx_log_error(NGX_LOG_ERR, c->log, 0,
                           "fail to convert proxy_bind_eth \"%V\"", pscf->eth);
-            return NGX_ERROR;
+            return;
         }
     }
 
