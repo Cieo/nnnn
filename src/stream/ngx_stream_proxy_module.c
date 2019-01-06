@@ -31,6 +31,7 @@ typedef struct {
     ngx_flag_t                       next_upstream;
     ngx_flag_t                       proxy_protocol;
     ngx_stream_upstream_local_t     *local;
+    ngx_stream_complex_value_t      *eth;
 
 #if (NGX_STREAM_SSL)
     ngx_flag_t                       ssl_enable;
@@ -128,6 +129,12 @@ static ngx_command_t  ngx_stream_proxy_commands[] = {
       0,
       NULL },
 
+    { ngx_string("proxy_bind_eth"),
+      NGX_STREAM_MAIN_CONF|NGX_STREAM_SRV_CONF|NGX_CONF_TAKE1,
+      ngx_stream_set_complex_value_slot,
+      NGX_STREAM_SRV_CONF_OFFSET,
+      offsetof(ngx_stream_proxy_srv_conf_t, eth),
+      NULL },
 
     { ngx_string("proxy_bind"),
       NGX_STREAM_MAIN_CONF|NGX_STREAM_SRV_CONF|NGX_CONF_TAKE1,
@@ -352,6 +359,7 @@ ngx_stream_proxy_handler(ngx_stream_session_t *s)
 {
     u_char                           *p;
     ngx_str_t                        *host;
+    ngx_str_t                        eth;
     ngx_uint_t                        i;
     ngx_connection_t                 *c;
     ngx_resolver_ctx_t               *ctx, temp;
@@ -374,11 +382,23 @@ ngx_stream_proxy_handler(ngx_stream_session_t *s)
         return;
     }
 
+    if (pscf->eth) {
+        if (ngx_stream_complex_value(s, pscf->eth, &eth) != NGX_OK) {
+            ngx_log_error(NGX_LOG_ERR, c->log, 0,
+                          "fail to convert proxy_bind_eth \"%V\"", pscf->eth);
+            return;
+        }
+    }
+
+    ngx_log_error(NGX_LOG_ERR, c->log, 0,
+                  "value of eth is \"%V\"", eth);
+
     s->upstream = u;
 
     s->log_handler = ngx_stream_proxy_log_error;
 
     u->peer.log = c->log;
+    u->peer.eth = eth;
     u->peer.log_error = NGX_ERROR_ERR;
 
     if (ngx_stream_proxy_set_local(s, u, pscf->local) != NGX_OK) {

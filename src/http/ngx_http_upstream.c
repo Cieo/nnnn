@@ -544,7 +544,12 @@ ngx_http_upstream_init(ngx_http_request_t *r)
 static void
 ngx_http_upstream_init_request(ngx_http_request_t *r)
 {
+
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                  "init upstream");
+
     ngx_str_t                      *host;
+    ngx_str_t                      eth;
     ngx_uint_t                      i;
     ngx_resolver_ctx_t             *ctx, temp;
     ngx_http_cleanup_t             *cln;
@@ -790,8 +795,20 @@ found:
         return;
     }
 
-    u->peer.start_time = ngx_current_msec;
+    if (u->conf->eth) {
+        if (ngx_http_complex_value(r, u->conf->eth, &eth) != NGX_OK) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                          "fail to convert proxy_bind_eth");
+            return;
+        }
 
+    }
+
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                  "find proxy_bind_eth %V", &eth);
+
+    u->peer.start_time = ngx_current_msec;
+    u->peer.eth = eth;
     if (u->conf->next_upstream_tries
         && u->peer.tries > u->conf->next_upstream_tries)
     {

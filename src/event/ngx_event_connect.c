@@ -27,6 +27,7 @@ ngx_event_connect_peer(ngx_peer_connection_t *pc)
 #endif
     ngx_int_t          event;
     ngx_err_t          err;
+    ngx_str_t          eth;
     ngx_uint_t         level;
     ngx_socket_t       s;
     ngx_event_t       *rev, *wev;
@@ -81,7 +82,7 @@ ngx_event_connect_peer(ngx_peer_connection_t *pc)
         goto failed;
     }
 
-    if (pc->local) {
+    if (pc->local && pc->eth.len == 0) {
 
 #if (NGX_HAVE_TRANSPARENT_PROXY)
         if (pc->transparent) {
@@ -144,7 +145,24 @@ ngx_event_connect_peer(ngx_peer_connection_t *pc)
 
             goto failed;
         }
+    } else if (pc->eth.len != 0){
+        eth = pc->eth;
+        ngx_log_error(NGX_LOG_CRIT, pc->log, ngx_socket_errno,
+                      "about to bind eth (%V)", &eth);
+        if (setsockopt(s, SOL_SOCKET, SO_BINDTODEVICE,
+                       (char *)eth.data, eth.len)
+            == -1)
+        {
+            ngx_log_error(NGX_LOG_ALERT, pc->log, ngx_socket_errno,
+                          "setsockopt(SO_BIND_ETH) failed");
+            goto failed;
+        }
+        ngx_log_error(NGX_LOG_CRIT, pc->log, ngx_socket_errno,
+                      "success to bind eth (%V)", &eth);
     }
+
+
+
 
     if (type == SOCK_STREAM) {
         c->recv = ngx_recv;
