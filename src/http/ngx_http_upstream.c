@@ -176,7 +176,7 @@ static char *ngx_http_upstream_server(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
 
 static ngx_int_t ngx_http_upstream_set_local(ngx_http_request_t *r,
-  ngx_http_upstream_t *u, ngx_http_upstream_local_t *local);
+  ngx_http_upstream_t *u, ngx_http_upstream_local_t *local, ngx_int_t version);
 
 static void *ngx_http_upstream_create_main_conf(ngx_conf_t *cf);
 static char *ngx_http_upstream_init_main_conf(ngx_conf_t *cf, void *conf);
@@ -627,7 +627,12 @@ ngx_http_upstream_init_request(ngx_http_request_t *r)
         return;
     }
 
-    if (ngx_http_upstream_set_local(r, u, u->conf->local) != NGX_OK) {
+    if (ngx_http_upstream_set_local(r, u, u->conf->local, 4) != NGX_OK) {
+        ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
+        return;
+    }
+
+    if (ngx_http_upstream_set_local(r, u, u->conf->local_v6, 6) != NGX_OK) {
         ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
         return;
     }
@@ -6137,14 +6142,18 @@ ngx_http_upstream_bind_set_slot(ngx_conf_t *cf, ngx_command_t *cmd,
 
 static ngx_int_t
 ngx_http_upstream_set_local(ngx_http_request_t *r, ngx_http_upstream_t *u,
-    ngx_http_upstream_local_t *local)
+    ngx_http_upstream_local_t *local, ngx_int_t version)
 {
     ngx_int_t    rc;
     ngx_str_t    val;
     ngx_addr_t  *addr;
 
     if (local == NULL) {
-        u->peer.local = NULL;
+        if (version == 4){
+            u->peer.local = NULL;
+        } else if (version == 6) {
+            u->peer.local_v6 = NULL;
+        }
         return NGX_OK;
     }
 
@@ -6153,7 +6162,11 @@ ngx_http_upstream_set_local(ngx_http_request_t *r, ngx_http_upstream_t *u,
 #endif
 
     if (local->value == NULL) {
-        u->peer.local = local->addr;
+        if (version == 4) {
+            u->peer.local = local->addr;
+        } else if (version == 6) {
+            u->peer.local_v6 = local->addr;
+        }
         return NGX_OK;
     }
 
@@ -6182,7 +6195,11 @@ ngx_http_upstream_set_local(ngx_http_request_t *r, ngx_http_upstream_t *u,
     }
 
     addr->name = val;
-    u->peer.local = addr;
+    if (version == 4) {
+        u->peer.local = addr;
+    } else if (version == 6) {
+        u->peer.local_v6 = addr;
+    }
 
     return NGX_OK;
 }

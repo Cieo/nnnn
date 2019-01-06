@@ -31,6 +31,7 @@ typedef struct {
     ngx_flag_t                       next_upstream;
     ngx_flag_t                       proxy_protocol;
     ngx_stream_upstream_local_t     *local;
+    ngx_stream_upstream_local_t     *local_v6;
     ngx_stream_complex_value_t      *eth;
 
 #if (NGX_STREAM_SSL)
@@ -61,7 +62,7 @@ static void ngx_stream_proxy_handler(ngx_stream_session_t *s);
 static ngx_int_t ngx_stream_proxy_eval(ngx_stream_session_t *s,
     ngx_stream_proxy_srv_conf_t *pscf);
 static ngx_int_t ngx_stream_proxy_set_local(ngx_stream_session_t *s,
-    ngx_stream_upstream_t *u, ngx_stream_upstream_local_t *local);
+    ngx_stream_upstream_t *u, ngx_stream_upstream_local_t *local, ngx_int_t version);
 static void ngx_stream_proxy_connect(ngx_stream_session_t *s);
 static void ngx_stream_proxy_init_upstream(ngx_stream_session_t *s);
 static void ngx_stream_proxy_resolve_handler(ngx_resolver_ctx_t *ctx);
@@ -84,6 +85,8 @@ static char *ngx_stream_proxy_merge_srv_conf(ngx_conf_t *cf, void *parent,
 static char *ngx_stream_proxy_pass(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
 static char *ngx_stream_proxy_bind(ngx_conf_t *cf, ngx_command_t *cmd,
+    void *conf);
+static char *ngx_stream_proxy_bind_v6(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
 
 #if (NGX_STREAM_SSL)
@@ -139,6 +142,13 @@ static ngx_command_t  ngx_stream_proxy_commands[] = {
     { ngx_string("proxy_bind"),
       NGX_STREAM_MAIN_CONF|NGX_STREAM_SRV_CONF|NGX_CONF_TAKE1,
       ngx_stream_proxy_bind,
+      NGX_STREAM_SRV_CONF_OFFSET,
+      0,
+      NULL },
+
+    { ngx_string("proxy_bind_v6"),
+      NGX_STREAM_MAIN_CONF|NGX_STREAM_SRV_CONF|NGX_CONF_TAKE1,
+      ngx_stream_proxy_bind_v6,
       NGX_STREAM_SRV_CONF_OFFSET,
       0,
       NULL },
@@ -401,7 +411,12 @@ ngx_stream_proxy_handler(ngx_stream_session_t *s)
     u->peer.eth = eth;
     u->peer.log_error = NGX_ERROR_ERR;
 
-    if (ngx_stream_proxy_set_local(s, u, pscf->local) != NGX_OK) {
+    if (ngx_stream_proxy_set_local(s, u, pscf->local, 4) != NGX_OK) {
+        ngx_stream_proxy_finalize(s, NGX_STREAM_INTERNAL_SERVER_ERROR);
+        return;
+    }
+
+    if (ngx_stream_proxy_set_local(s, u, pscf->local_v6, 6) != NGX_OK) {
         ngx_stream_proxy_finalize(s, NGX_STREAM_INTERNAL_SERVER_ERROR);
         return;
     }
@@ -617,14 +632,18 @@ ngx_stream_proxy_eval(ngx_stream_session_t *s,
 
 static ngx_int_t
 ngx_stream_proxy_set_local(ngx_stream_session_t *s, ngx_stream_upstream_t *u,
-    ngx_stream_upstream_local_t *local)
+    ngx_stream_upstream_local_t *local, ngx_int_t version)
 {
     ngx_int_t    rc;
     ngx_str_t    val;
     ngx_addr_t  *addr;
 
     if (local == NULL) {
-        u->peer.local = NULL;
+        if (version == 4){
+            u->peer.local = NULL;
+        } else if (version == 6){
+            u->peer.local_v6 = NULL;
+        }
         return NGX_OK;
     }
 
@@ -633,7 +652,11 @@ ngx_stream_proxy_set_local(ngx_stream_session_t *s, ngx_stream_upstream_t *u,
 #endif
 
     if (local->value == NULL) {
-        u->peer.local = local->addr;
+        if (version == 4){
+            u->peer.local = local->addr;
+        } else if (version == 6) {
+            u->peer.local_v6 = local->addr;
+        }
         return NGX_OK;
     }
 
@@ -662,7 +685,11 @@ ngx_stream_proxy_set_local(ngx_stream_session_t *s, ngx_stream_upstream_t *u,
     }
 
     addr->name = val;
-    u->peer.local = addr;
+    if (version == 4){
+        u->peer.local = addr;
+    } else if (version == 6) {
+        u->peer.local_v6 = addr;
+    }
 
     return NGX_OK;
 }
@@ -2179,6 +2206,102 @@ ngx_stream_proxy_bind(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
         default:
             return NGX_CONF_ERROR;
+        }
+    }
+
+    if (cf->args->nelts > 2) {
+        if (ngx_strcmp(value[2].data, "transparent") == 0) {
+#if (NGX_HAVE_TRANSPARENT_PROXY)
+            ngx_core_conf_t  *ccf;
+
+            ccf = (ngx_core_conf_t *) ngx_get_conf(cf->cycle->conf_ctx,
+                                                   ngx_core_module);
+
+            ccf->transparent = 1;
+            local->transparent = 1;
+#else
+            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                               "transparent proxying is not supported "
+                               "on this platform, ignored");
+#endif
+        } else {
+            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                               "invalid parameter \"%V\"", &value[2]);
+            return NGX_CONF_ERROR;
+        }
+    }
+
+    return NGX_CONF_OK;
+}
+
+static char *
+ngx_stream_proxy_bind_v6(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    ngx_stream_proxy_srv_conf_t *pscf = conf;
+
+    ngx_int_t                            rc;
+    ngx_str_t                           *value;
+    ngx_stream_complex_value_t           cv;
+    ngx_stream_upstream_local_t         *local;
+    ngx_stream_compile_complex_value_t   ccv;
+
+    if (pscf->local_v6 != NGX_CONF_UNSET_PTR) {
+        return "is duplicate";
+    }
+
+    value = cf->args->elts;
+
+    if (cf->args->nelts == 2 && ngx_strcmp(value[1].data, "off") == 0) {
+        pscf->local_v6 = NULL;
+        return NGX_CONF_OK;
+    }
+
+    ngx_memzero(&ccv, sizeof(ngx_stream_compile_complex_value_t));
+
+    ccv.cf = cf;
+    ccv.value = &value[1];
+    ccv.complex_value = &cv;
+
+    if (ngx_stream_compile_complex_value(&ccv) != NGX_OK) {
+        return NGX_CONF_ERROR;
+    }
+
+    local = ngx_pcalloc(cf->pool, sizeof(ngx_stream_upstream_local_t));
+    if (local == NULL) {
+        return NGX_CONF_ERROR;
+    }
+
+    pscf->local_v6 = local;
+
+    if (cv.lengths) {
+        local->value = ngx_palloc(cf->pool, sizeof(ngx_stream_complex_value_t));
+        if (local->value == NULL) {
+            return NGX_CONF_ERROR;
+        }
+
+        *local->value = cv;
+
+    } else {
+        local->addr = ngx_palloc(cf->pool, sizeof(ngx_addr_t));
+        if (local->addr == NULL) {
+            return NGX_CONF_ERROR;
+        }
+
+        rc = ngx_parse_addr_port(cf->pool, local->addr, value[1].data,
+                                 value[1].len);
+
+        switch (rc) {
+            case NGX_OK:
+                local->addr->name = value[1];
+                break;
+
+            case NGX_DECLINED:
+                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                                   "invalid address \"%V\"", &value[1]);
+                /* fall through */
+
+            default:
+                return NGX_CONF_ERROR;
         }
     }
 
